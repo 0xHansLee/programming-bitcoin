@@ -204,12 +204,12 @@ class Signature:
 ## PrivageKey class    
 class PrivateKey:
     
-    def __init__(self, privkey):
+    def __init__(self, privKey):
         self.privKey = privKey
         self.pubPoint = privKey * G
         
     def hex(self):
-        return f'{privKey:x}'.zfill(64)
+        return f'{self.privKey:x}'.zfill(64)
     
     def sign(self, z):
         k = self.deterministic_k(z)
