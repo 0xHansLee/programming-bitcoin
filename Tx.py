@@ -149,6 +149,15 @@ class Tx:
                 return False
         return True
     
+    def is_coinbase(self):
+        first_input = self.tx_ins[0]
+        return len(self.tx_ins) == 1 and first_input.prev_tx == b'\x00' * 32 and first_input.prev_index == 0xffffffff
+    
+    def coinbase_height(self):
+        if self.is_coinbase():
+            return little_endian_to_int(self.tx_ins[0].script_sig.cmds[0])
+        else:
+            return None
         
 # Transaction input class        
 class TxInput:

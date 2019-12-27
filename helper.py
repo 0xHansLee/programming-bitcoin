@@ -11,6 +11,8 @@ SIGHASH_ALL = 1
 SIGHASH_NONE = 2
 SIGHASH_SINGLE = 3
 BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+TWO_WEEKS = 60 * 60 * 24 * 14
+MAX_TARGET = 0xffff * 256**(0x1d - 3)
 
 
 def encode_base58(s):
@@ -116,4 +118,29 @@ def h160_to_p2sh_address(h160, testnet=False):
         prefix = b'\x05'
     return encode_base58_checksum(prefix + h160)
 
+def bits_to_target(bits):
+    exponent = bits[-1]
+    coefficient = little_endian_to_int(bits[:-1])
+    target = coefficient * 256 ** (exponent - 3)
+    return target
 
+def target_to_bits(target):
+    raw_bytes = target.to_bytes(32, 'big')
+    raw_bytes = raw_bytes.lstrip(b'\x00')
+    if raw_bytes[0] > 0x7f:
+        exponent = len(raw_bytes) + 1
+        coefficient = b'\x00' + raw_bytes[:2]
+    else:
+        exponent = len(raw_bytes)
+        coefficient = raw_bytes[:3]
+    new_bits = coefficient[::-1] + bytes([exponent])
+    ## exponent에 +3 하지 않는 이유.
+    ## target 계산할 때 coef의 3 byte를 포함하여 전체 자리수, 즉 256 ** e이기 때문에 len()으로 구함
+    return new_bits
+
+def calculate_new_bits(previous_bits, time_differential):
+    time_differential = min(TWO_WEEKS * 4, time_differential)
+    time_differential = max(TWO_WEEKS // 4, time_differential)
+    new_target = bits_to_target(previous_bits) * time_differential // TWO_WEEKS
+    new_target = min(new_target, MAX_TARGET)
+    return target_to_bits(new_target)
