@@ -1,9 +1,14 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# In[322]:
+
+
 from random import randint
 import hashlib
 import hmac
+from helper import encode_base58_checksum, hash160
+from io import BytesIO
 
 ## Finite Field Element class
 
@@ -157,6 +162,9 @@ class S256Field(FiniteFieldElement):
         
     def __repr__(self):
         return f'{self.num:x}'.zfill(64)
+    
+    def sqrt(self):
+        return self**((P + 1) // 4)
 
 ## Point class on SECP256K1 curve
 class S256Point(ECPoint):
@@ -176,7 +184,7 @@ class S256Point(ECPoint):
             return f'S256Point({self.x}, {self.y})'
         
     def __rmul__(self, coefficient):
-        coef == coefficient % N
+        coef = coefficient % N
         return super().__rmul__(coef)
     
     def verify(self, z, sig):
@@ -185,6 +193,53 @@ class S256Point(ECPoint):
         v = sig.r * s_inv % N
         res = u * G + v * self
         return res.x.num == sig.r
+    
+    def sec(self, compressed=True):
+        '''returns the binary version of the SEC format'''
+        if compressed:
+            # y is even : 0x02 + ~
+            if self.y.num % 2 == 0:
+                return b'\x02' + self.x.num.to_bytes(32, 'big')
+            # y is odd : 0x03 + ~
+            else:
+                return b'\x03' + self.x.num.to_bytes(32, 'big')
+        else:
+            return b'\x04' + self.x.num.to_bytes(32, 'big') + self.y.num.to_bytes(32, 'big')
+    
+    @classmethod    
+    def parse(cls, sec_bin):
+        '''returns a S256Point Object from a SEC binary (not hex)'''
+        
+        # Uncompressed
+        if sec_bin[0] == 4:
+            x = int.from_bytes(sec_bin[1:33], 'big')
+            y = int.from_bytes(sec_bin[33:65], 'big')
+            return cls(x, y)
+        
+        # compressed
+        elif sec_bin[0] == 2 or sec_bin[0] == 3:
+            x = S256Field(int.from_bytes(sec_bin[1:], 'big'))
+            y1 = (x**3 + S256Field(B)).sqrt()
+            y2 = S256Field(P - y1.num)
+            if sec_bin[0] == 2:
+                return cls(x, y1 if y1.num % 2 == 0 else y2)
+            else:
+                return cls(x, y1 if y1.num % 2 == 1 else y2)
+        else:
+            raise ValueError('Wrong public key')
+            
+    def hash160(self, compressed=True):
+        return hash160(self.sec(compressed))
+    
+    def address(self, compressed=True, testnet=False):
+        '''Returns the address string'''
+        h160 = self.hash160(compressed)
+        if testnet:
+            prefix = b'\x6f'
+        else:
+            prefix = b'\x00'
+        return encode_base58_checksum(prefix + h160)
+            
         
 G = S256Point(
     0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798,
@@ -201,6 +256,48 @@ class Signature:
     def __repr__(self):
         return f'Signature(r : {self.r}, s : {self.s})'
     
+    def der(self):
+        rbin = self.r.to_bytes(32, 'big')
+        # remove null bytes (\x00)
+        rbin = rbin.lstrip(b'\x00')
+        if rbin[0] & 0x80:
+            rbin = b'\x00' + rbin
+        
+        # result : 0x02 + length(r) + r
+        result = bytes([2, len(rbin)]) + rbin
+        
+        sbin = self.s.to_bytes(32, 'big')
+        sbin = sbin.lstrip(b'\x00')
+        if sbin[0] & 0x80:
+            sbin = b'\x00' + sbin
+            
+        # result : 0x02 + length(r) + r + 0x02 + length(s) + s
+        result += bytes([2, len(sbin)]) + sbin
+        return bytes([0x30, len(result)]) + result
+        
+    @classmethod
+    def parse(cls, signature_bin):
+        s = BytesIO(signature_bin)
+        compound = s.read(1)[0]
+        if compound != 0x30:
+            raise SyntaxError("Bad Signature")
+        length = s.read(1)[0]
+        if length + 2 != len(signature_bin):
+            raise SyntaxError("Bad Signature Length")
+        marker = s.read(1)[0]
+        if marker != 0x02:
+            raise SyntaxError("Bad Signature")
+        rlength = s.read(1)[0]
+        r = int.from_bytes(s.read(rlength), 'big')
+        marker = s.read(1)[0]
+        if marker != 0x02:
+            raise SyntaxError("Bad Signature")
+        slength = s.read(1)[0]
+        s = int.from_bytes(s.read(slength), 'big')
+        if len(signature_bin) != 6 + rlength + slength:
+            raise SyntaxError("Signature too long")
+        return cls(r, s)
+    
 ## PrivageKey class    
 class PrivateKey:
     
@@ -209,7 +306,7 @@ class PrivateKey:
         self.pubPoint = privKey * G
         
     def hex(self):
-        return f'{self.privKey:x}'.zfill(64)
+        return f'{privKey:x}'.zfill(64)
     
     def sign(self, z):
         k = self.deterministic_k(z)
@@ -239,3 +336,16 @@ class PrivateKey:
                 return candidate  # <2>
             k = hmac.new(k, v + b'\x00', s256).digest()
             v = hmac.new(k, v, s256).digest()
+            
+    def wif(self, compressed=True, testnet=False):
+        priv_bytes = self.privKey.to_bytes(32, 'big')
+        if testnet:
+            prefix = b'\xef'
+        else:
+            prefix = b'\x80'
+        if compressed:
+            suffix = b'\x01'
+        else:
+            suffix = b''
+        return encode_base58_checksum(prefix + priv_bytes + suffix)
+
