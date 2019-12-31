@@ -12,13 +12,14 @@ LOWEST_BITS = bytes.fromhex('ffff001d')
 
 class Block:
     
-    def __init__(self, version, prev_block_hash, merkle_root, timestamp, bits, nonce):
+    def __init__(self, version, prev_block_hash, merkle_root, timestamp, bits, nonce, tx_hashes=None):
         self.version = version
         self.prev_block_hash = prev_block_hash
         self.merkle_root = merkle_root
         self.timestamp = timestamp
         self.bits = bits
         self.nonce = nonce
+        self.tx_hashes = tx_hashes
         
     @classmethod
     def parse(cls, s):
@@ -63,5 +64,8 @@ class Block:
         h256 = hash256(self.serialize())
         return little_endian_to_int(h256) < self.target()
     
-    
+    def validate_merkle_root(self):
+        hashes = [h[::-1] for h in self.tx_hashes]
+        root = merkle_root(hashes)[::-1]
+        return root == self.merkle_root
 
